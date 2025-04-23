@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+
+import sys
+import uuid
+
+import numpy as np
+import open3d
+import rospy
+import sensor_msgs.point_cloud2 as pc2
+import std_msgs.msg
+from sensor_msgs.msg import PointCloud2
+
+
+def open3d_to_ros(pc_o3d: open3d.geometry.PointCloud, frame_id: str):
+    """Convert an Open3D point cloud to a numpy structured array"""
+    np_points = np.asarray(pc_o3d.points)
+    fields = [
+        pc2.PointField(name="x", offset=0, datatype=pc2.PointField.FLOAT32, count=1),
+        pc2.PointField(name="y", offset=4, datatype=pc2.PointField.FLOAT32, count=1),
+        pc2.PointField(name="z", offset=8, datatype=pc2.PointField.FLOAT32, count=1),
+    ]
+    header = std_msgs.msg.Header()
+    header.frame_id = frame_id
+    header.stamp = rospy.Time.now()
+    cloud_msg = pc2.create_cloud(header, fields, np_points)
+    return cloud_msg
+
+class AdaptiveVoxelizationNode:
+    def __init__(self):
+        rospy.init_node("adaptive_voxelization", anonymous=True)
+
+        self.pcd_path = rospy.get_param("~REFERENCE_POINT_CLOUD_PATH", None)
+        self.publish_map_rate = rospy.get_param("~PUBLISH_MAP_RATE", 1)
+        self.map_topic_name = rospy.get_param("~MAP_TOPIC", None)
+        self.map_frame = rospy.get_param("~MAP_FRAME", None)
+        self.cloud_id = None
+        self.robot_position = None
+        self.should_update_map = True
+
+        if self.pcd_path is None:
+            rospy.logerr("Parameter '~REFERENCE_POINT_CLOUD_PATH' is required.")
+            raise SystemExit(1)
+        
+        if self.map_topic_name is None:
+            rospy.logerr("Parameter '~MAP_TOPIC' is required.")
+            raise SystemExit(1)
+        
+        if self.map_frame is None:
+            rospy.logerr("Parameter '~MAP_FRAME' is required.")
+            raise SystemExit(1)
+        
+        # Load reference point cloud
+        self.reference_point_cloud = open3d.io.read_point_cloud(self.pcd_path)
+        self.downsampled_point_cloud = open3d_to_ros(self.reference_point_cloud, self.map_frame)
+
+        # Load reference point cloud
+        rospy.loginfo(f"Loading reference point cloud from {self.pcd_path}")
+        reference_point_cloud = open3d.io.read_point_cloud(self.pcd_path)
+        if reference_point_cloud.is_empty():
+            rospy.logerr("Loaded point cloud is empty.")
+            return 1
+
+        # Create a new publisher for the reference point cloud
+        self.map_publisher = rospy.Publisher(self.map_topic_name, PointCloud2, queue_size=1)
+        rospy.Timer(rospy.Duration(1.0 / self.publish_map_rate), self.publish_map)
+
+    def adaptive_voxel_downsample(self, min_voxel_size=0.1, max_voxel_size=1.0, radius_thresholds=(5.0, 20.0)):
+        self.loginfo(f"Downsampling reference point cloud centered on {self.robot_position}")
+        points = np.asarray(self.reference_point_cloud.points)
+        distances = np.linalg.norm(points - self.robot_position, axis=1)
+
+        # Assign point indices to bins based on distance
+        near_mask = distances < radius_thresholds[0]
+        mid_mask = (distances >= radius_thresholds[0]) & (distances < radius_thresholds[1])
+        far_mask = distances >= radius_thresholds[1]
+
+        # Split into three subsets
+        pcd_near = self.reference_point_cloud.select_by_index(np.where(near_mask)[0])
+        pcd_mid = self.reference_point_cloud.select_by_index(np.where(mid_mask)[0])
+        pcd_far = self.reference_point_cloud.select_by_index(np.where(far_mask)[0])
+
+        # Apply voxelization
+        pcd_near = pcd_near.voxel_down_sample(voxel_size=min_voxel_size)
+        pcd_mid = pcd_mid.voxel_down_sample(voxel_size=(min_voxel_size + max_voxel_size) / 2)
+        pcd_far = pcd_far.voxel_down_sample(voxel_size=max_voxel_size)
+
+        # Combine
+        return pcd_near + pcd_mid + pcd_far
+
+    def publish_map(self, _):
+        if self.robot_position is not None and self.should_update_map:
+            self.should_update_map = False
+            self.downsampled_point_cloud = open3d_to_ros(self.adaptive_voxel_downsample())
+        self.map_publisher.publish(self.downsampled_point_cloud)
+
+
+def main():
+    node = AdaptiveVoxelizationNode()
+
+    rospy.spin()
+    return 0
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except rospy.ROSInterruptException:
+        pass

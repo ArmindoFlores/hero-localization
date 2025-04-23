@@ -1,0 +1,210 @@
+<launch>
+ 
+    <arg name="robot_namespace" default="robot"/>
+
+    <arg name="use_gdb" default="true"/>
+    <arg name="nodelet_manager" value="nodelet_manager"/>
+    <arg name="launch_prefix" value="gdb -ex run --args" if="$(arg use_gdb)"/>
+    <arg name="launch_prefix" value="" unless="$(arg use_gdb)"/>
+    <arg name="nodelet_args" value="--no-bond"/>
+    <arg name="respawn" value="false" if="$(arg use_gdb)"/>
+    <arg name="respawn" value="true" unless="$(arg use_gdb)"/>
+    <arg name="robot_type" value="husky" if="$(eval robot_namespace.startswith('husky'))"/>
+    <arg name="robot_type" value="spot"  if="$(eval robot_namespace.startswith('spot'))"/> 
+
+    <arg name="number_of_velodynes" default="3" />
+    <arg name="b_use_multiple_pc" value="$(eval arg('number_of_velodynes') > 1)"/>
+    <arg name="pc_input" value="locus_input"/>
+
+    <!-- 0:TOP, 1:FRONT, 2:REAR -->
+    <arg name="pc_trans_in_0" default="velodyne_points/transformed"/>
+    <arg name="pc_trans_in_1" default="velodyne_front/velodyne_points/transformed"/>
+    <arg name="pc_trans_in_2" default="velodyne_rear/velodyne_points/transformed"/>
+
+    <group ns="$(arg robot_namespace)">
+
+        <!-- Francisco: Load calibration params -->
+        <rosparam file="/mnt/pic2/bags/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" />
+
+        <!-- Load parameters -->
+        <rosparam file="$(find locus)/config/body_filter_params_$(arg robot_type).yaml"
+                    subst_value="true"/>
+
+        <!-- Load robot description -->
+        <include file="$(find locus)/launch/robot_description.launch">
+            <arg name="robot_namespace" value="$(arg robot_namespace)"/>
+        </include>
+
+        <remap from="~FAILURE_DETECTION_TOPIC" to="point_cloud_merger_lo/failure_detection"/>
+        <remap from="~RESURRECTION_DETECTION_TOPIC" to="point_cloud_merger_lo/resurrection_detection"/>
+   
+        <!-- <node pkg="locus" name="sensors_health_monitor" type="sensors_health_monitor.py" output="screen" if="$(eval number_of_velodynes > 1)">  -->
+        <!-- <node pkg="locus" name="sensors_health_monitor" type="sensors_health_monitor.py" output="screen"> 
+            <remap from="failure_detection" to="point_cloud_merger_lo/failure_detection"/>
+            <remap from="resurrection_detection" to="point_cloud_merger_lo/resurrection_detection"/>
+        </node> -->
+
+        <node pkg="hero_localization" name="icp_node" type="icp.py" output="screen"> 
+            <param name="LIDAR_TOPIC" value="velodyne_points/transformed" />
+            <param name="PUBLISH_TOPIC" value="icp_pose" />
+            <param name="MAP_TOPIC" value="reference_map" />
+            <param name="MAP_FRAME" value="$(arg robot_namespace)/map" />
+            <param name="BASE_FRAME" value="$(arg robot_namespace)/base_link" />
+        </node>
+
+        <node pkg="hero_localization" name="adaptive_voxelization_node" type="adaptive_voxelization.py" output="screen"> 
+            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/output_downsampled-0.1.pcd" /> -->
+            <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/I-map-downsampled.pcd" />
+            <param name="ROBOT_POSE" value="$(arg robot_namespace)/odometry/filtered" />
+            <param name="MAP_TOPIC" value="reference_map" />
+            <param name="PUBLISH_MAP_RATE" value="1.0" />
+            <param name="MAP_FRAME" value="$(arg robot_namespace)/map" />
+        </node>
+
+        <node pkg="robot_localization" type="ekf_localization_node" name="ekf_localization" output="screen">
+            <param name="frequency" value="10"/>
+            <param name="sensor_timeout" value="10.0"/>
+            <param name="two_d_mode" value="true"/>
+            <param name="map_frame" value="$(arg robot_namespace)/map"/>
+            <param name="odom_frame" value="$(arg robot_namespace)/odom"/>
+            <param name="base_link_frame" value="$(arg robot_namespace)/base_link"/>
+            <param name="world_frame" value="$(arg robot_namespace)/map"/>
+            <param name="publish_tf" value="true"/>
+            <rosparam command="load" file="$(find hero_localization)/config/ekf.yaml"/>
+        </node>
+
+        <node pkg="nodelet"
+            type="nodelet"
+            name="transform_points_base_link"
+            args="standalone pcl/PassThrough">
+            <remap from="~input" to="velodyne_points"/>
+            <remap from="~output" to="$(arg pc_trans_in_0)"/>
+            <rosparam subst_value="true">
+                filter_field_name: z
+                filter_limit_min: -100
+                filter_limit_max: 100
+                output_frame: $(arg robot_namespace)/base_link
+            </rosparam>
+        </node>
+
+        <node if="$(eval arg('number_of_velodynes') > 1)"
+            pkg="nodelet"
+            type="nodelet"
+            name="transform_points_base_link_front"
+            args="standalone pcl/PassThrough">
+            <remap from="~input" to="velodyne_front/velodyne_points"/>
+            <remap from="~output" to="$(arg pc_trans_in_1)"/>
+            <rosparam subst_value="true">
+                filter_field_name: z
+                filter_limit_min: -100
+                filter_limit_max: 100
+                output_frame: $(arg robot_namespace)/base_link
+            </rosparam>
+        </node>
+
+        <node if="$(eval arg('number_of_velodynes') > 2)"
+            pkg="nodelet"
+            type="nodelet"
+            name="transform_points_base_link_rear"
+            args="standalone pcl/PassThrough">
+            <remap from="~input" to="velodyne_rear/velodyne_points"/>
+            <remap from="~output" to="$(arg pc_trans_in_2)"/>
+            <rosparam subst_value="true">
+                filter_field_name: z
+                filter_limit_min: -100
+                filter_limit_max: 100
+                output_frame: $(arg robot_namespace)/base_link
+            </rosparam>
+        </node>
+
+        <!-- <node if="$(arg b_use_multiple_pc)" pkg="point_cloud_merger" type="point_cloud_merger_node" name="point_cloud_merger_lo" output="screen">
+            <rosparam file="$(find point_cloud_merger)/config/parameters.yaml"/>
+            <param name="merging/number_of_velodynes" value="$(arg number_of_velodynes)"/>
+            <remap from="~pcld0" to="$(arg pc_trans_in_0)"/>
+            <remap from="~pcld1" to="$(arg pc_trans_in_1)"/>
+            <remap from="~pcld2" to="$(arg pc_trans_in_2)"/>
+            <remap from="~combined_point_cloud" to="combined_point_cloud"/>
+        </node>     -->
+
+        <node pkg="nodelet"
+              type="nodelet"
+              name="$(arg nodelet_manager)"
+              launch-prefix="$(arg launch_prefix)"
+              args="manager"
+              respawn="$(arg respawn)"/>
+        
+        <node pkg="nodelet"
+              type="nodelet"
+              name="body_filter"
+              args="load point_cloud_filter/BodyFilter $(arg nodelet_manager) $(arg nodelet_args)"
+              respawn="$(arg respawn)">
+          <remap from="~input" to="combined_point_cloud" if="$(arg b_use_multiple_pc)"/>
+          <remap from="~input" to="velodyne_points/transformed" unless="$(arg b_use_multiple_pc)"/>
+        </node>
+
+        <node pkg="nodelet" type="nodelet" name="voxel_grid" args="load point_cloud_filter/CustomVoxelGrid $(arg nodelet_manager)" output="screen" respawn="true">
+            <remap from="~input" to="body_filter/output" />
+
+            <rosparam subst_value="true">
+            filter_field_name: z
+            filter_limit_min: -100
+            filter_limit_max: 100
+            filter_limit_negative: False
+            leaf_size: 0.25
+            output_frame: $(arg robot_namespace)/base_link
+            </rosparam>
+        </node>
+
+        <node pkg="nodelet"
+            type="nodelet"
+            name="normal_computation"
+            args="load point_cloud_filter/NormalComputation $(arg nodelet_manager) $(arg nodelet_args)"
+            respawn="$(arg respawn)">
+            <remap from="~input" to="voxel_grid/output"/>
+            <remap from="~output" to="$(arg pc_input)" />
+
+           <param name="num_threads"                value="4" if="$(eval robot_namespace.startswith('husky'))" />
+           <param name="num_threads"                value="1" if="$(eval robot_namespace.startswith('spot'))" />
+
+        </node>
+
+        <!-- <node pkg="jackal_robot_localization" type="navsat_transform_node" name="navsat_transform_node" output="screen">
+            <param name="delay"                        value="5.0"/>
+            <param name="yaw_offset"                   value="0"/>
+            <param name="magnetic_declination_radians" value="0"/>
+            <param name="zero_altitude"                value="true"/>
+            <param name="broadcast_utm_transform"      value="false"/>
+            <param name="publish_filtered_gps"    value="true"/>
+            <param name="wait_for_datum"          value="true"/>
+            <rosparam param="datum">[49.9, 9.0, 0]</rosparam>
+            <remap from="imu/data"          to="imu/data"/>
+            <remap from="odometry/filtered" to="odometry/global_filtered"/>
+        </node> -->
+
+        <!-- <node pkg="jackal_robot_localization" type="ekf_localization_node" name="global_ekf_localization">
+            <rosparam command="load" file="$(find multi_jackal_nav)/params/global_ekf_francisco.yaml"/>
+            <param name="map_frame"       value="$(arg robot_namespace)/map"/>
+            <param name="odom_frame"      value="$(arg robot_namespace)/odom"/>
+            <param name="base_link_frame" value="$(arg robot_namespace)/base_link"/>
+            <param name="world_frame"     value="$(arg robot_namespace)/map"/>
+            <rosparam param="initial_state" subst_value="true">
+                [       0.0,          0.0,        0.0,
+                        0.0,          0.0,        0.0,
+                        0.0,          0.0,        0.0,
+                        0.0,          0.0,        0.0,
+                        0.0,          0.0,        0.0]
+            </rosparam>
+            <remap from="odometry/filtered" to="odometry/global_filtered"/>
+        </node> -->
+
+        <!-- For Nebula, comment the next two lines: -->
+        <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_velo" args="0 0 0 0 0 0 $(arg robot_namespace)/base_link velodyne" /> -->
+        <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_navsat" args="0 0 0 0 0 0 $(arg robot_namespace)/base_link navsat_link" /> -->
+        <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_base" args="0 0 0 0 0 0 $(arg robot_namespace)/base_link base_link" /> -->
+        <node pkg="tf2_ros" type="static_transform_publisher" name="odom_to_base_link" args="0 0 0 0 0 0 $(arg robot_namespace)/odom $(arg robot_namespace)/base_link" />
+        <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_map_locus" args="0 0 0 0 0 0 $(arg robot_namespace)/base_link $(arg robot_namespace)/map_locus" /> -->
+        <!-- End Nebula comment -->
+
+    </group>
+ 
+</launch>
