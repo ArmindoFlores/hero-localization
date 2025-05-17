@@ -1,4 +1,4 @@
-pose0: icp_pose
+pose0: icp_pose/monitored
 pose0_differential: false
 pose0_config: [
     true, true, false,
@@ -8,23 +8,23 @@ pose0_config: [
     false, false, false
 ]
 
-# odom0: visual_odom
-# odom0_differential: false
-# odom0_config: [false, false, false,
-#                false, false, false,
-#                true,  true,  false,
-#                false, false, true,
-#                false, false, false]
+odom0: visual_odom/monitored
+odom0_differential: false
+odom0_config: [false, false, false,
+               false, false, false,
+               true,  true,  false,
+               false, false, true,
+               false, false, false]
 
-# imu0: vn100/imu_wori_wcov
-# imu0_differential: false
-# imu0_config: [false, false, false,
-#               false,  false,  false,
-#               false, false, false,
-#               false,  false,  true,
-#               false, false, false]
+imu0: vn100/imu_wori_wcov/monitored
+imu0_differential: false
+imu0_config: [false, false, false,
+              false,  false,  false,
+              false, false, false,
+              false,  false,  true,
+              false, false, false]
 
-# imu0_remove_gravitational_acceleration: false
+imu0_remove_gravitational_acceleration: false
 
 # FIXME: don't hardcode this
 initial_state: [
@@ -42,6 +42,3 @@ initial_state: [
 #                             0,    0,    0,    0,   0.01,  0,
 #                             0,    0,    0,    0,    0,   0.01]
 
-output_frame: map
-base_link_frame: base_link
-world_frame: map

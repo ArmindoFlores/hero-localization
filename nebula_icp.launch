@@ -54,11 +54,17 @@
 
         <node pkg="hero_localization" name="adaptive_voxelization_node" type="adaptive_voxelization.py" output="screen"> 
             <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/output_downsampled-0.1.pcd" /> -->
-            <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/I-map-downsampled.pcd" />
-            <param name="ROBOT_POSE" value="$(arg robot_namespace)/odometry/filtered" />
+            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/I-map-downsampled.pcd" /> -->
+            <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/I-map-downsampled2.pcd" />
+            <param name="ROBOT_POSE" value="odometry/filtered" />
             <param name="MAP_TOPIC" value="reference_map" />
             <param name="PUBLISH_MAP_RATE" value="1.0" />
             <param name="MAP_FRAME" value="$(arg robot_namespace)/map" />
+        </node>
+
+        <node pkg="hero_localization" name="sensor_monitor" type="sensor_monitor.py" output="screen"> 
+            <param name="SENSOR_CONFIG_FILE" value="$(find hero_localization)/config/ekf.yaml" />
+            <param name="PASSTHROUGH" value="true" />
         </node>
 
         <node pkg="robot_localization" type="ekf_localization_node" name="ekf_localization" output="screen">

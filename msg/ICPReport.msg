@@ -1,0 +1,5 @@
+geometry_msgs/PoseWithCovarianceStamped pose
+float64 r2
+float64 fitness
+int64 n_points
+int64 n_matches

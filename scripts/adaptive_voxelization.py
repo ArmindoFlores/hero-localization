@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
 import sys
-import uuid
 
 import numpy as np
 import open3d
 import rospy
 import sensor_msgs.point_cloud2 as pc2
 import std_msgs.msg
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import PointCloud2
 
 
@@ -26,12 +26,13 @@ def open3d_to_ros(pc_o3d: open3d.geometry.PointCloud, frame_id: str):
     return cloud_msg
 
 class AdaptiveVoxelizationNode:
-    def __init__(self):
-        rospy.init_node("adaptive_voxelization", anonymous=True)
+    def __init__(self, node_name="adaptive_voxelization"):
+        rospy.init_node(node_name, anonymous=True)
 
         self.pcd_path = rospy.get_param("~REFERENCE_POINT_CLOUD_PATH", None)
         self.publish_map_rate = rospy.get_param("~PUBLISH_MAP_RATE", 1)
         self.map_topic_name = rospy.get_param("~MAP_TOPIC", None)
+        self.robot_pose_topic = rospy.get_param("~ROBOT_POSE", None)
         self.map_frame = rospy.get_param("~MAP_FRAME", None)
         self.cloud_id = None
         self.robot_position = None
@@ -39,6 +40,10 @@ class AdaptiveVoxelizationNode:
 
         if self.pcd_path is None:
             rospy.logerr("Parameter '~REFERENCE_POINT_CLOUD_PATH' is required.")
+            raise SystemExit(1)
+        
+        if self.robot_pose_topic is None:
+            rospy.logerr("Parameter '~ROBOT_POSE' is required.")
             raise SystemExit(1)
         
         if self.map_topic_name is None:
@@ -59,13 +64,27 @@ class AdaptiveVoxelizationNode:
         if reference_point_cloud.is_empty():
             rospy.logerr("Loaded point cloud is empty.")
             return 1
+        
+        # Subscribe to the robot's position estimate
+        rospy.Subscriber(self.robot_pose_topic, Odometry, self.update_reference, queue_size=1)
 
         # Create a new publisher for the reference point cloud
         self.map_publisher = rospy.Publisher(self.map_topic_name, PointCloud2, queue_size=1)
         rospy.Timer(rospy.Duration(1.0 / self.publish_map_rate), self.publish_map)
 
-    def adaptive_voxel_downsample(self, min_voxel_size=0.1, max_voxel_size=1.0, radius_thresholds=(5.0, 20.0)):
-        self.loginfo(f"Downsampling reference point cloud centered on {self.robot_position}")
+    def update_reference(self, msg: Odometry):
+        position = np.array([
+            msg.pose.pose.position.x,
+            msg.pose.pose.position.y,
+            0
+        ])
+        if self.robot_position is None or np.linalg.norm(self.robot_position - position) > 1:
+            rospy.loginfo(f"Updated robot position: {position}")
+            self.robot_position = position
+            self.should_update_map = True
+
+    def adaptive_voxel_downsample(self, min_voxel_size=1, max_voxel_size=10.0, radius_thresholds=(45.0, 45.0)):
+        rospy.loginfo(f"Downsampling reference point cloud centered on {self.robot_position}")
         points = np.asarray(self.reference_point_cloud.points)
         distances = np.linalg.norm(points - self.robot_position, axis=1)
 
@@ -90,7 +109,7 @@ class AdaptiveVoxelizationNode:
     def publish_map(self, _):
         if self.robot_position is not None and self.should_update_map:
             self.should_update_map = False
-            self.downsampled_point_cloud = open3d_to_ros(self.adaptive_voxel_downsample())
+            self.downsampled_point_cloud = open3d_to_ros(self.adaptive_voxel_downsample(), self.map_frame)
         self.map_publisher.publish(self.downsampled_point_cloud)
 
 
