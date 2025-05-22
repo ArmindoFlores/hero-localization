@@ -262,23 +262,25 @@ class ICPNode:
             pose_message,
             msg.header.frame_id
         ).pose
+
+        t4 = time.time()
+        elapsed = t4 - t0
+
         if self.include_icp_results:
             message = ICPReport(
                 pose=pose_message,
                 r2=icp_result.inlier_rmse / distance_threshold,
                 fitness=icp_result.fitness,
-                n_points=0,
-                n_matches=0
+                elapsed=elapsed
             )
         else:
             message = pose_message
 
-        t4 = time.time()
         rospy.loginfo("Timing breakdown:")
         rospy.loginfo(f"Conversion: {(t1 - t0)*1000:.2f} ms")
         rospy.loginfo(f"Transform: {(t2 - t1)*1000:.2f} ms")
         rospy.loginfo(f"ICP: {(t3 - t2)*1000:.2f} ms")
-        rospy.loginfo(f"Total: {(t4 - t0)*1000:.2f} ms")
+        rospy.loginfo(f"Total: {elapsed*1000:.2f} ms")
         self.icp_results_publisher.publish(message)
 
 

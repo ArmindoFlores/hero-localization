@@ -24,7 +24,7 @@
     <group ns="$(arg robot_namespace)">
 
         <!-- Francisco: Load calibration params -->
-        <rosparam file="/mnt/pic2/bags/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" />
+        <rosparam file="/mnt/pic2/bags/I/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" />
 
         <!-- Load parameters -->
         <rosparam file="$(find locus)/config/body_filter_params_$(arg robot_type).yaml"
@@ -53,9 +53,10 @@
         </node>
 
         <node pkg="hero_localization" name="adaptive_voxelization_node" type="adaptive_voxelization.py" output="screen"> 
-            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/output_downsampled-0.1.pcd" /> -->
-            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/I-map-downsampled.pcd" /> -->
-            <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/I-map-downsampled2.pcd" />
+            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/I/output_downsampled-0.1.pcd" /> -->
+            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/I/I-map-downsampled.pcd" /> -->
+            <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/I/I-map-downsampled2.pcd" />
+            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/O/map_robot0.pcd" /> -->
             <param name="ROBOT_POSE" value="odometry/filtered" />
             <param name="MAP_TOPIC" value="reference_map" />
             <param name="PUBLISH_MAP_RATE" value="1.0" />
@@ -63,7 +64,8 @@
         </node>
 
         <node pkg="hero_localization" name="sensor_monitor" type="sensor_monitor.py" output="screen"> 
-            <param name="SENSOR_CONFIG_FILE" value="$(find hero_localization)/config/ekf.yaml" />
+            <param name="SENSOR_CONFIG_FILE" value="$(find hero_localization)/config/ekf_nebula_I.yaml" />
+            <!-- <param name="SENSOR_CONFIG_FILE" value="$(find hero_localization)/config/ekf_nebula_O.yaml" /> -->
             <param name="PASSTHROUGH" value="true" />
         </node>
 
@@ -76,7 +78,8 @@
             <param name="base_link_frame" value="$(arg robot_namespace)/base_link"/>
             <param name="world_frame" value="$(arg robot_namespace)/map"/>
             <param name="publish_tf" value="true"/>
-            <rosparam command="load" file="$(find hero_localization)/config/ekf.yaml"/>
+            <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_I.yaml"/>
+            <!-- <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_O.yaml"/> -->
         </node>
 
         <node pkg="nodelet"
