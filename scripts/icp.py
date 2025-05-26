@@ -263,7 +263,7 @@ class ICPNode:
             msg.header.frame_id
         ).pose
 
-        t4 = time.time()
+        t4 = time.perf_counter()
         elapsed = t4 - t0
 
         if self.include_icp_results:
