@@ -2,7 +2,7 @@
  
     <arg name="robot_namespace" default="robot"/>
 
-    <arg name="use_gdb" default="true"/>
+    <arg name="use_gdb" default="false"/>
     <arg name="nodelet_manager" value="nodelet_manager"/>
     <arg name="launch_prefix" value="gdb -ex run --args" if="$(arg use_gdb)"/>
     <arg name="launch_prefix" value="" unless="$(arg use_gdb)"/>
@@ -21,14 +21,27 @@
     <arg name="pc_trans_in_1" default="velodyne_front/velodyne_points/transformed"/>
     <arg name="pc_trans_in_2" default="velodyne_rear/velodyne_points/transformed"/>
 
+    <arg name="sensor_config_file" value="$(find hero_localization)/config/ekf_nebula_spot.yaml" if="$(eval robot_namespace.startswith('spot'))" />
+    <arg name="sensor_config_file" value="$(find hero_localization)/config/ekf_nebula_husky.yaml" if="$(eval robot_namespace.startswith('husky'))" />
+    <arg name="sensor_config_file" value="$(find hero_localization)/config/ekf_nebula_jackal.yaml" if="$(eval robot_namespace.startswith('jackal'))" />
+
+    <arg name="map_topic" value="reference_map" />
+    <arg name="global_map_topic" value="global_map" />
+
+    <arg name="map_frame" value="$(arg robot_namespace)/map" />
+
     <group ns="$(arg robot_namespace)">
 
         <!-- Francisco: Load calibration params -->
-        <rosparam file="/mnt/pic2/bags/I/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" />
+        <rosparam file="$(find hero_localization)/../../../bags/C/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" if="$(eval robot_namespace.startswith('husky'))" />
+        <!-- <rosparam file="$(find hero_localization)/../../../bags/B/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" /> -->
+        <rosparam file="$(find hero_localization)/../../../bags/I/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" if="$(eval robot_namespace.startswith('spot'))"/>
+        <rosparam file="$(find hero_localization)/../../../bags/tecnico-garage/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" if="$(eval robot_namespace.startswith('jackal'))"/>
+        <!-- <rosparam file="$(find hero_localization)/../../../bags/O/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" /> -->
 
         <!-- Load parameters -->
-        <rosparam file="$(find locus)/config/body_filter_params_$(arg robot_type).yaml"
-                    subst_value="true"/>
+        <!-- <rosparam file="$(find locus)/config/body_filter_params_$(arg robot_type).yaml"
+                    subst_value="true"/> -->
 
         <!-- Load robot description -->
         <include file="$(find locus)/launch/robot_description.launch">
@@ -37,49 +50,78 @@
 
         <remap from="~FAILURE_DETECTION_TOPIC" to="point_cloud_merger_lo/failure_detection"/>
         <remap from="~RESURRECTION_DETECTION_TOPIC" to="point_cloud_merger_lo/resurrection_detection"/>
-   
-        <!-- <node pkg="locus" name="sensors_health_monitor" type="sensors_health_monitor.py" output="screen" if="$(eval number_of_velodynes > 1)">  -->
-        <!-- <node pkg="locus" name="sensors_health_monitor" type="sensors_health_monitor.py" output="screen"> 
-            <remap from="failure_detection" to="point_cloud_merger_lo/failure_detection"/>
-            <remap from="resurrection_detection" to="point_cloud_merger_lo/resurrection_detection"/>
-        </node> -->
 
-        <node pkg="hero_localization" name="icp_node" type="icp.py" output="screen"> 
-            <param name="LIDAR_TOPIC" value="velodyne_points/transformed" />
+        <node pkg="hero_localization" name="icp_node" type="icp.py" output="screen" respawn="false"> 
+            <param name="LIDAR_TOPIC" value="velodyne_points/transformed" if="$(eval robot_namespace.startswith('spot'))" />
+            <param name="LIDAR_TOPIC" value="velodyne_points/transformed" if="$(eval robot_namespace.startswith('jackal'))" />
+            <!-- <param name="LIDAR_TOPIC" value="/velodyne_points" if="$(eval robot_namespace.startswith('husky'))" /> -->
+            <param name="LIDAR_TOPIC" value="combined_point_cloud" if="$(eval robot_namespace.startswith('husky'))" />
             <param name="PUBLISH_TOPIC" value="icp_pose" />
-            <param name="MAP_TOPIC" value="reference_map" />
-            <param name="MAP_FRAME" value="$(arg robot_namespace)/map" />
+            <param name="MAP_TOPIC" value="$(arg map_topic)" />
+            <param name="GLOBAL_MAP_TOPIC" value="$(arg global_map_topic)" />
+            <param name="MAP_FRAME" value="$(arg map_frame)" />
             <param name="BASE_FRAME" value="$(arg robot_namespace)/base_link" />
         </node>
 
+        <node pkg="hero_localization" name="odom_to_pose" type="odom_to_pose.py" output="screen"> 
+            <param name="ODOM_TOPIC" value="odometry/filtered" />
+            <param name="POSE_TOPIC" value="pose/filtered" />
+        </node>
+
+        <node pkg="hero_localization" name="timing_analysis" type="timing_analysis.py" output="screen"> 
+            <param name="SENSOR_CONFIG_FILE" value="$(arg sensor_config_file)" />
+            <param name="SAVE_FILE" value="$(find hero_localization)/timing_analysis.pkl" />
+        </node>
+
+        <node pkg="hero_localization" name="baseline" type="baseline.py" output="screen"> 
+        </node>
+
+        <node pkg="hero_localization" name="performance_analysis" type="performance_analysis.py" output="screen">
+            <rosparam param="NODES">
+                - "adaptive_voxelization_node"
+                - "ekf_localization"
+                - "icp_node"
+                - "sensor_monitor"
+                - "baseline"
+            </rosparam>
+            <param name="SAVE_FILE" value="$(find hero_localization)/performance_analysis.pkl" />
+            <param name="RATE" value="0.5" />
+        </node>
+
         <node pkg="hero_localization" name="adaptive_voxelization_node" type="adaptive_voxelization.py" output="screen"> 
-            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/I/output_downsampled-0.1.pcd" /> -->
-            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/I/I-map-downsampled.pcd" /> -->
-            <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/I/I-map-downsampled2.pcd" />
-            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="/mnt/pic2/bags/O/map_robot0.pcd" /> -->
+            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/C/h4_a1_gt_map.pcd" if="$(eval robot_namespace.startswith('husky'))" /> -->
+            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/B/s1_b2_gt_map.pcd" /> -->
+            <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/D/h4_sr2_gt_map.pcd" if="$(eval robot_namespace.startswith('husky'))"  />
+            <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/I/I-map-downsampled2.pcd" if="$(eval robot_namespace.startswith('spot'))" />
+            <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/tecnico-garage/gt.pcd" if="$(eval robot_namespace.startswith('jackal'))" />
+            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/O/map_robot0.pcd" /> -->
             <param name="ROBOT_POSE" value="odometry/filtered" />
-            <param name="MAP_TOPIC" value="reference_map" />
+            <param name="MAP_TOPIC" value="$(arg map_topic)" />
+            <param name="GLOBAL_MAP_TOPIC" value="$(arg global_map_topic)" />
             <param name="PUBLISH_MAP_RATE" value="1.0" />
-            <param name="MAP_FRAME" value="$(arg robot_namespace)/map" />
+            <param name="Z_CLIP_DISTANCE_BELOW" value="2.5" />
+            <param name="Z_CLIP_DISTANCE_ABOVE" value="7" />
+            <param name="MAP_FRAME" value="$(arg map_frame)" />
         </node>
 
         <node pkg="hero_localization" name="sensor_monitor" type="sensor_monitor.py" output="screen"> 
-            <param name="SENSOR_CONFIG_FILE" value="$(find hero_localization)/config/ekf_nebula_I.yaml" />
-            <!-- <param name="SENSOR_CONFIG_FILE" value="$(find hero_localization)/config/ekf_nebula_O.yaml" /> -->
-            <param name="PASSTHROUGH" value="true" />
+            <param name="SENSOR_CONFIG_FILE" value="$(arg sensor_config_file)" />
+            <param name="PASSTHROUGH" value="false" />
+            <!-- <param name="ICP_RESET_TRIGGER" value="trigger_global_search" /> -->
         </node>
 
         <node pkg="robot_localization" type="ekf_localization_node" name="ekf_localization" output="screen">
             <param name="frequency" value="10"/>
             <param name="sensor_timeout" value="10.0"/>
-            <param name="two_d_mode" value="true"/>
-            <param name="map_frame" value="$(arg robot_namespace)/map"/>
+            <param name="two_d_mode" value="false"/>
+            <param name="map_frame" value="$(arg map_frame)"/>
             <param name="odom_frame" value="$(arg robot_namespace)/odom"/>
             <param name="base_link_frame" value="$(arg robot_namespace)/base_link"/>
-            <param name="world_frame" value="$(arg robot_namespace)/map"/>
+            <param name="world_frame" value="$(arg map_frame)"/>
             <param name="publish_tf" value="true"/>
-            <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_I.yaml"/>
-            <!-- <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_O.yaml"/> -->
+            <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_spot.yaml" if="$(eval robot_namespace.startswith('spot'))" />
+            <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_husky.yaml" if="$(eval robot_namespace.startswith('husky'))" />
+            <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_jackal.yaml" if="$(eval robot_namespace.startswith('jackal'))" />
         </node>
 
         <node pkg="nodelet"
@@ -126,14 +168,14 @@
             </rosparam>
         </node>
 
-        <!-- <node if="$(arg b_use_multiple_pc)" pkg="point_cloud_merger" type="point_cloud_merger_node" name="point_cloud_merger_lo" output="screen">
+        <node if="$(arg b_use_multiple_pc)" pkg="point_cloud_merger" type="point_cloud_merger_node" name="point_cloud_merger_lo" output="screen">
             <rosparam file="$(find point_cloud_merger)/config/parameters.yaml"/>
             <param name="merging/number_of_velodynes" value="$(arg number_of_velodynes)"/>
             <remap from="~pcld0" to="$(arg pc_trans_in_0)"/>
             <remap from="~pcld1" to="$(arg pc_trans_in_1)"/>
             <remap from="~pcld2" to="$(arg pc_trans_in_2)"/>
             <remap from="~combined_point_cloud" to="combined_point_cloud"/>
-        </node>     -->
+        </node>    
 
         <node pkg="nodelet"
               type="nodelet"
@@ -173,38 +215,10 @@
             <remap from="~output" to="$(arg pc_input)" />
 
            <param name="num_threads"                value="4" if="$(eval robot_namespace.startswith('husky'))" />
+           <param name="num_threads"                value="4" if="$(eval robot_namespace.startswith('jackal'))" />
            <param name="num_threads"                value="1" if="$(eval robot_namespace.startswith('spot'))" />
 
         </node>
-
-        <!-- <node pkg="jackal_robot_localization" type="navsat_transform_node" name="navsat_transform_node" output="screen">
-            <param name="delay"                        value="5.0"/>
-            <param name="yaw_offset"                   value="0"/>
-            <param name="magnetic_declination_radians" value="0"/>
-            <param name="zero_altitude"                value="true"/>
-            <param name="broadcast_utm_transform"      value="false"/>
-            <param name="publish_filtered_gps"    value="true"/>
-            <param name="wait_for_datum"          value="true"/>
-            <rosparam param="datum">[49.9, 9.0, 0]</rosparam>
-            <remap from="imu/data"          to="imu/data"/>
-            <remap from="odometry/filtered" to="odometry/global_filtered"/>
-        </node> -->
-
-        <!-- <node pkg="jackal_robot_localization" type="ekf_localization_node" name="global_ekf_localization">
-            <rosparam command="load" file="$(find multi_jackal_nav)/params/global_ekf_francisco.yaml"/>
-            <param name="map_frame"       value="$(arg robot_namespace)/map"/>
-            <param name="odom_frame"      value="$(arg robot_namespace)/odom"/>
-            <param name="base_link_frame" value="$(arg robot_namespace)/base_link"/>
-            <param name="world_frame"     value="$(arg robot_namespace)/map"/>
-            <rosparam param="initial_state" subst_value="true">
-                [       0.0,          0.0,        0.0,
-                        0.0,          0.0,        0.0,
-                        0.0,          0.0,        0.0,
-                        0.0,          0.0,        0.0,
-                        0.0,          0.0,        0.0]
-            </rosparam>
-            <remap from="odometry/filtered" to="odometry/global_filtered"/>
-        </node> -->
 
         <!-- For Nebula, comment the next two lines: -->
         <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="base_to_velo" args="0 0 0 0 0 0 $(arg robot_namespace)/base_link velodyne" /> -->
