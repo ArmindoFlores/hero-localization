@@ -8,11 +8,9 @@ import numpy as np
 import open3d
 import ros_numpy
 import rospy
-import tf
 import tf.transformations as tf_trans
 import tf2_ros
-import tf2_geometry_msgs
-from scipy.spatial.transform import Rotation as R
+from nav_msgs.msg import Odometry
 from std_srvs.srv import Trigger, TriggerResponse
 from hero_localization.msg import ICPReport
 from geometry_msgs.msg import PoseWithCovarianceStamped
@@ -66,50 +64,23 @@ def transformation_to_pose(transform, frame_id, time: rospy.Time = None):
     pose.pose.pose.orientation.w = quaternion[3]
     # Temporary: set covariances
     pose.pose.covariance = [
-        1e-2, 0, 0, 0, 0, 0,
-        0, 1e-2, 0, 0, 0, 0,
-        0, 0, 1e-2, 0, 0, 0,
-        0, 0, 0, 1e-1, 0, 0,
-        0, 0, 0, 0, 1e-1, 0,
-        0, 0, 0, 0, 0, 1e-1
+        5e-3, 0, 0, 0, 0, 0,
+        0, 5e-3, 0, 0, 0, 0,
+        0, 0, 5e-3, 0, 0, 0,
+        0, 0, 0, 5e-2, 0, 0,
+        0, 0, 0, 0, 5e-2, 0,
+        0, 0, 0, 0, 0, 5e-2
     ]
+    # pose.pose.covariance = [
+    #     1e-4, 0, 0, 0, 0, 0,
+    #     0, 1e-4, 0, 0, 0, 0,
+    #     0, 0, 1e6, 0, 0, 0,
+    #     0, 0, 0, 1e6, 0, 0,
+    #     0, 0, 0, 0, 1e6, 0,
+    #     0, 0, 0, 0, 0, 1e-3
+    # ]
 
     return pose
-
-def clamp_transformation(T_icp: np.ndarray, T_global: np.ndarray, M_max: float, R_max: float) -> np.ndarray:
-    # Extract translations
-    t_icp = T_icp[:3, 3]
-    t_global = T_global[:3, 3]
-    
-    delta_t = t_icp - t_global
-    dist = np.linalg.norm(delta_t)
-    
-    # Limit translation
-    if dist > M_max:
-        delta_t = delta_t / dist * M_max
-    t_corrected = t_global + delta_t
-
-    # Extract rotations
-    R_icp = R.from_matrix(T_icp[:3, :3])
-    R_global = R.from_matrix(T_global[:3, :3])
-
-    R_rel = R_icp * R_global.inv()
-    angle = R_rel.magnitude()  # angle in radians
-
-    # Limit rotation
-    if angle > R_max:
-        axis = R_rel.as_rotvec() / angle  # normalized axis
-        R_limited = R.from_rotvec(axis * R_max)
-        R_corrected = R_limited * R_global
-    else:
-        R_corrected = R_icp
-
-    # Compose final transformation matrix
-    T_corrected = np.eye(4)
-    T_corrected[:3, :3] = R_corrected.as_matrix()
-    T_corrected[:3, 3] = t_corrected
-
-    return T_corrected
 
 def position_and_quaternion_to_matrix(px, py, pz, qx, qy, qz, qw):
     # Create 4x4 transformation matrix from quaternion and translation
@@ -154,8 +125,12 @@ class ICPNode:
         self.include_icp_results = rospy.get_param("~INCLUDE_ICP_RESULTS", True)
         self.map_frame = rospy.get_param("~MAP_FRAME", None)
         self.base_frame = rospy.get_param("~BASE_FRAME", None)
-        self.adaptive_distance_threshold = 1
+        self.global_estimate_topic = rospy.get_param("~GLOBAL_ESTIMATE", None)
+        self.adaptive_distance_threshold = 2
         self.adaptive_max_iterations = 30
+        self.last_global_estimate = None
+        self.last_global_estimate_tf = None
+        self.previous_used_global_transform_time = rospy.get_time()
         
         if self.lidar_topic_name is None:
             rospy.logerr("Parameter '~LIDAR_TOPIC' is required.")
@@ -177,6 +152,10 @@ class ICPNode:
             rospy.logerr("Parameter '~BASE_FRAME' is required.")
             raise SystemExit(1)
         
+        if self.global_estimate_topic is None:
+            rospy.logerr("Parameter '~GLOBAL_ESTIMATE' is required.")
+            raise SystemExit(1)
+        
         self.buffer = tf2_ros.Buffer(rospy.Duration(secs=10))
         self.listener = tf2_ros.TransformListener(self.buffer)
         
@@ -186,6 +165,7 @@ class ICPNode:
         self.global_fpfh = None
         self.reference_point_cloud_stamp = None
         self.load_initial_guess()
+        self.last_registration_timestamp = None
 
         # Create a new publisher for ICP results
         if not self.include_icp_results:
@@ -193,6 +173,9 @@ class ICPNode:
         else:
             self.icp_results_publisher = rospy.Publisher(self.robot_namespace + self.publish_topic_name, ICPReport, queue_size=10)
         rospy.loginfo(f"Created new publisher '{self.publish_topic_name}'")
+
+        # Subscribe to global estimate
+        rospy.Subscriber(self.global_estimate_topic, Odometry, self.global_estimate_callback, queue_size=10)
 
         # Subscribe to map topic
         rospy.Subscriber(self.map_topic_name, PointCloud2, self.reference_point_cloud_callback, queue_size=1)
@@ -234,7 +217,8 @@ class ICPNode:
         oz = rospy.get_param(self.robot_namespace + "fiducial_calibration/orientation/z")
         ow = rospy.get_param(self.robot_namespace + "fiducial_calibration/orientation/w")
 
-        self._previous_transform  = position_and_quaternion_to_matrix(px, py, pz, ox, oy, oz, ow)
+        self.previous_transform  = position_and_quaternion_to_matrix(px, py, pz, ox, oy, oz, ow)
+        self.previous_transform_time = rospy.get_time()
         self.is_initial_guess = True
 
     def handle_global_search_trigger(self, _):
@@ -264,6 +248,17 @@ class ICPNode:
             )
             rospy.loginfo("Updated global point cloud")
 
+    def global_estimate_callback(self, msg):
+        self.last_global_estimate = msg
+        pos = msg.pose.pose.position
+        translation = [pos.x, pos.y, pos.z]
+        ori = msg.pose.pose.orientation
+        quaternion = [ori.x, ori.y, ori.z, ori.w]
+        self.last_global_estimate_tf = position_and_quaternion_to_matrix(
+            *translation,
+            *quaternion
+        )
+
     def point_cloud_callback(self, msg: PointCloud2):
         start_time = time.perf_counter()
         how_old = (rospy.get_time() - msg.header.stamp.to_time()) * 1000
@@ -291,17 +286,20 @@ class ICPNode:
         scan_pcd = scan_pcd.voxel_down_sample(0.1)
         scan_pcd = self.transform_lidar_to_base_link(scan_pcd, msg.header.stamp, msg.header.frame_id)
 
-        try:
-            transform = self.buffer.lookup_transform(
-                target_frame=self.map_frame,
-                source_frame=self.base_frame,
-                time=rospy.Time(0),
-            )
-            t_mat = tf_to_matrix(transform)
-        except tf2_ros.LookupException:
-            rospy.logerror("Global estimate doesn't exist yet")
+        cov = np.sum(np.abs(self.last_global_estimate.pose.covariance)) if self.last_global_estimate is not None else 10000
+        previous_transform_age = rospy.get_time() - self.previous_transform_time
+        last_used_global_transform_age = rospy.get_time() - self.previous_used_global_transform_time
+        
+        if cov < 1 or self.previous_transform is None or previous_transform_age > 15 or last_used_global_transform_age > 15:
+            self.previous_used_global_transform_time = rospy.get_time()
+            initial_guess = self.last_global_estimate_tf
+        else:
+            initial_guess = self.previous_transform
 
-        initial_guess = t_mat
+        if initial_guess is None:
+            rospy.logwarn_throttle(1, "Couldn't perform ICP because no initial estimate was available")
+            return
+
         if self.do_global_search:
             # If lost, perform global search before ICP
             self.do_global_search = False
@@ -329,8 +327,8 @@ class ICPNode:
             rospy.loginfo("Done")
 
         # Apply ICP
-        # distance_threshold = 2
         distance_threshold = self.adaptive_distance_threshold
+        max_iter = self.adaptive_max_iterations
         icp_result = open3d.pipelines.registration.registration_icp(
             scan_pcd,
             self.reference_point_cloud,
@@ -338,22 +336,27 @@ class ICPNode:
             initial_guess,
             open3d.pipelines.registration.TransformationEstimationPointToPoint(),
             open3d.pipelines.registration.ICPConvergenceCriteria(
-                max_iteration=self.adaptive_max_iterations,
+                max_iteration=int(max_iter),
             ),
         )
+        current_time = rospy.get_time()
+        elapsed = 0 if self.last_registration_timestamp is None else current_time - self.last_registration_timestamp
+        self.last_registration_timestamp = current_time
+        k = elapsed / 0.1
+
         r2 = icp_result.inlier_rmse / distance_threshold
         if icp_result.fitness > 0.7 and r2 < 0.5:
-            self.adaptive_max_iterations = max(15, self.adaptive_max_iterations - 1)
-            self.adaptive_distance_threshold = max(0.1, self.adaptive_distance_threshold - 0.0125)
+            self.adaptive_max_iterations = min(self.adaptive_max_iterations, max(15, self.adaptive_max_iterations - 0.05 * k))
+            self.adaptive_distance_threshold = min(self.adaptive_distance_threshold, max(0.1, self.adaptive_distance_threshold - 0.0125 * k))
         if icp_result.fitness < 0.5 or r2 > 0.5:
         # if icp_result.fitness < 0.3 or r2 > 0.7:
-            self.adaptive_max_iterations = min(100, self.adaptive_max_iterations + 2)
-            self.adaptive_distance_threshold = min(0.5, self.adaptive_distance_threshold + 0.0125)
+            self.adaptive_max_iterations = max(self.adaptive_max_iterations, min(100, self.adaptive_max_iterations + 0.05 * k))
+            self.adaptive_distance_threshold = max(self.adaptive_distance_threshold, min(2, self.adaptive_distance_threshold + 0.0125 * k))
 
-        self._previous_transform = icp_result.transformation
+        self.previous_transform = icp_result.transformation
+        self.previous_transform_time = rospy.get_time()
         self.is_initial_guess = False
 
-        # transformation = clamp_transformation(icp_result.transformation, initial_guess, 1, 0.75)
         transformation = icp_result.transformation
 
         pose_message = transformation_to_pose(
@@ -371,7 +374,8 @@ class ICPNode:
                 r2=r2,
                 fitness=icp_result.fitness,
                 elapsed=elapsed,
-                distance_threshold=distance_threshold
+                distance_threshold=distance_threshold,
+                max_iter=max_iter
             )
         else:
             message = pose_message

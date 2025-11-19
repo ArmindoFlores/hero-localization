@@ -31,13 +31,17 @@ class AdaptiveVoxelizationNode:
 
         self.pcd_path = rospy.get_param("~REFERENCE_POINT_CLOUD_PATH", None)
         self.publish_map_rate = rospy.get_param("~PUBLISH_MAP_RATE", 1)
-        self.publish_global_rate = rospy.get_param("~PUBLISH_GLOBAL_MAP_RATE", 0.1)
+        self.publish_global_rate = rospy.get_param("~PUBLISH_GLOBAL_MAP_RATE", 0.05)
         self.map_topic_name = rospy.get_param("~MAP_TOPIC", None)
         self.global_map_topic_name = rospy.get_param("~GLOBAL_MAP_TOPIC", None)
         self.robot_pose_topic = rospy.get_param("~ROBOT_POSE", None)
         self.map_frame = rospy.get_param("~MAP_FRAME", None)
         self.z_clip_distance_below = rospy.get_param("~Z_CLIP_DISTANCE_BELOW", 1e128)
         self.z_clip_distance_above = rospy.get_param("~Z_CLIP_DISTANCE_ABOVE", 1e128)
+        self.small_radius_threshold = rospy.get_param("~SMALL_RADIUS_THRESHOLD", 15)
+        self.large_radius_threshold = rospy.get_param("~LARGE_RADIUS_THRESHOLD", 30)
+        self.min_voxel_size = rospy.get_param("~MIN_VOXEL_SIZE", 0.25)
+        self.max_voxel_size = rospy.get_param("~MAX_VOXEL_SIZE", 0.75)
         self.cloud_id = None
         self.robot_position = None
         self.should_update_map = True
@@ -63,7 +67,7 @@ class AdaptiveVoxelizationNode:
         self.reference_point_cloud = open3d.io.read_point_cloud(self.pcd_path)
         if self.reference_point_cloud.is_empty():
             rospy.logerr("Loaded point cloud is empty.")
-            return 1
+            raise SystemExit(1)
         
         self.global_point_cloud = open3d_to_ros(self.reference_point_cloud, self.map_frame)
         self.downsampled_point_cloud = open3d_to_ros(self.reference_point_cloud, self.map_frame)
@@ -124,7 +128,14 @@ class AdaptiveVoxelizationNode:
     def publish_map(self, _):
         if self.robot_position is not None and self.should_update_map:
             self.should_update_map = False
-            self.downsampled_point_cloud = open3d_to_ros(self.adaptive_voxel_downsample(), self.map_frame)
+            self.downsampled_point_cloud = open3d_to_ros(
+                self.adaptive_voxel_downsample(
+                    self.min_voxel_size,
+                    self.max_voxel_size,
+                    radius_thresholds=(self.small_radius_threshold, self.large_radius_threshold)
+                ), 
+                self.map_frame
+            )
         self.map_publisher.publish(self.downsampled_point_cloud)
     
     def publish_global_map(self, _):

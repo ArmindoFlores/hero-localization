@@ -11,6 +11,7 @@
     <arg name="respawn" value="true" unless="$(arg use_gdb)"/>
     <arg name="robot_type" value="husky" if="$(eval robot_namespace.startswith('husky'))"/>
     <arg name="robot_type" value="spot"  if="$(eval robot_namespace.startswith('spot'))"/> 
+    <arg name="robot_type" value="turflynx"  if="$(eval robot_namespace.startswith('turflynx'))"/> 
 
     <arg name="number_of_velodynes" default="3" />
     <arg name="b_use_multiple_pc" value="$(eval arg('number_of_velodynes') > 1)"/>
@@ -24,6 +25,7 @@
     <arg name="sensor_config_file" value="$(find hero_localization)/config/ekf_nebula_spot.yaml" if="$(eval robot_namespace.startswith('spot'))" />
     <arg name="sensor_config_file" value="$(find hero_localization)/config/ekf_nebula_husky.yaml" if="$(eval robot_namespace.startswith('husky'))" />
     <arg name="sensor_config_file" value="$(find hero_localization)/config/ekf_nebula_jackal.yaml" if="$(eval robot_namespace.startswith('jackal'))" />
+    <arg name="sensor_config_file" value="$(find hero_localization)/config/ekf_nebula_turflynx.yaml" if="$(eval robot_namespace.startswith('turflynx'))" />
 
     <arg name="map_topic" value="reference_map" />
     <arg name="global_map_topic" value="global_map" />
@@ -37,6 +39,7 @@
         <!-- <rosparam file="$(find hero_localization)/../../../bags/B/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" /> -->
         <rosparam file="$(find hero_localization)/../../../bags/I/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" if="$(eval robot_namespace.startswith('spot'))"/>
         <rosparam file="$(find hero_localization)/../../../bags/tecnico-garage/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" if="$(eval robot_namespace.startswith('jackal'))"/>
+        <rosparam file="$(find hero_localization)/../../toro-dataset-qt-peru-2/run_2/fiducial_calibration.yaml" command="load" ns="fiducial_calibration" if="$(eval robot_namespace.startswith('turflynx'))"/>
         <!-- <rosparam file="$(find hero_localization)/../../../bags/O/fiducial_calibration_$(arg robot_namespace).yaml" command="load" ns="fiducial_calibration" /> -->
 
         <!-- Load parameters -->
@@ -54,6 +57,7 @@
         <node pkg="hero_localization" name="icp_node" type="icp.py" output="screen" respawn="false"> 
             <param name="LIDAR_TOPIC" value="velodyne_points/transformed" if="$(eval robot_namespace.startswith('spot'))" />
             <param name="LIDAR_TOPIC" value="velodyne_points/transformed" if="$(eval robot_namespace.startswith('jackal'))" />
+            <param name="LIDAR_TOPIC" value="velodyne_points" if="$(eval robot_namespace.startswith('turflynx'))" />
             <!-- <param name="LIDAR_TOPIC" value="/velodyne_points" if="$(eval robot_namespace.startswith('husky'))" /> -->
             <param name="LIDAR_TOPIC" value="combined_point_cloud" if="$(eval robot_namespace.startswith('husky'))" />
             <param name="PUBLISH_TOPIC" value="icp_pose" />
@@ -61,22 +65,34 @@
             <param name="GLOBAL_MAP_TOPIC" value="$(arg global_map_topic)" />
             <param name="MAP_FRAME" value="$(arg map_frame)" />
             <param name="BASE_FRAME" value="$(arg robot_namespace)/base_link" />
+            <param name="GLOBAL_ESTIMATE" value="odometry/filtered" />
+        </node>
+
+        <node pkg="hero_localization" name="heatmap_node" type="heatmap.py" output="screen" respawn="false"> 
+            <param name="SENSOR_CONFIG_FILE" value="$(arg sensor_config_file)" />
+            <param name="MAP_FRAME" value="$(arg map_frame)" />
+            <param name="BASE_FRAME" value="$(arg robot_namespace)/base_link" />
+            <param name="FGA" value="true" />
+            <param name="GRANULARITY" value="1" />
+            <param name="SAVE_FILE" value="$(find hero_localization)/heatmap.pkl" />
+            <param name="PUBLISH_TOPIC" value="heatmap" />
+            <param name="INITIAL_MAP_FILE" value="$(find hero_localization)/heatmap-toro-1.pkl" />
         </node>
 
         <node pkg="hero_localization" name="odom_to_pose" type="odom_to_pose.py" output="screen"> 
             <param name="ODOM_TOPIC" value="odometry/filtered" />
             <param name="POSE_TOPIC" value="pose/filtered" />
         </node>
-
+<!-- 
         <node pkg="hero_localization" name="timing_analysis" type="timing_analysis.py" output="screen"> 
             <param name="SENSOR_CONFIG_FILE" value="$(arg sensor_config_file)" />
             <param name="SAVE_FILE" value="$(find hero_localization)/timing_analysis.pkl" />
-        </node>
-
+        </node> -->
+<!-- 
         <node pkg="hero_localization" name="baseline" type="baseline.py" output="screen"> 
-        </node>
+        </node> -->
 
-        <node pkg="hero_localization" name="performance_analysis" type="performance_analysis.py" output="screen">
+        <!-- <node pkg="hero_localization" name="performance_analysis" type="performance_analysis.py" output="screen">
             <rosparam param="NODES">
                 - "adaptive_voxelization_node"
                 - "ekf_localization"
@@ -86,14 +102,16 @@
             </rosparam>
             <param name="SAVE_FILE" value="$(find hero_localization)/performance_analysis.pkl" />
             <param name="RATE" value="0.5" />
-        </node>
+        </node> -->
 
         <node pkg="hero_localization" name="adaptive_voxelization_node" type="adaptive_voxelization.py" output="screen"> 
-            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/C/h4_a1_gt_map.pcd" if="$(eval robot_namespace.startswith('husky'))" /> -->
+            <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/C/h4_a1_gt_map.pcd" if="$(eval robot_namespace.startswith('husky'))" />
             <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/B/s1_b2_gt_map.pcd" /> -->
-            <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/D/h4_sr2_gt_map.pcd" if="$(eval robot_namespace.startswith('husky'))"  />
+            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/D/h4_sr2_gt_map.pcd" if="$(eval robot_namespace.startswith('husky'))"  /> -->
             <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/I/I-map-downsampled2.pcd" if="$(eval robot_namespace.startswith('spot'))" />
             <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/tecnico-garage/gt.pcd" if="$(eval robot_namespace.startswith('jackal'))" />
+            <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../toro-dataset-qt-peru-2/qt-peru-map-ds.pcd" if="$(eval robot_namespace.startswith('turflynx'))" /> -->
+            <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../toro-dataset-qt-peru-2/qt-peru-map.pcd" if="$(eval robot_namespace.startswith('turflynx'))" />
             <!-- <param name="REFERENCE_POINT_CLOUD_PATH" value="$(find hero_localization)/../../../bags/O/map_robot0.pcd" /> -->
             <param name="ROBOT_POSE" value="odometry/filtered" />
             <param name="MAP_TOPIC" value="$(arg map_topic)" />
@@ -101,19 +119,41 @@
             <param name="PUBLISH_MAP_RATE" value="1.0" />
             <param name="Z_CLIP_DISTANCE_BELOW" value="2.5" />
             <param name="Z_CLIP_DISTANCE_ABOVE" value="7" />
+            <param name="SMALL_RADIUS_THRESHOLD" value="60" if="$(eval robot_namespace.startswith('spot'))" />
+            <param name="LARGE_RADIUS_THRESHOLD" value="60" if="$(eval robot_namespace.startswith('spot'))" />
+            <param name="SMALL_RADIUS_THRESHOLD" value="50" if="$(eval robot_namespace.startswith('turflynx'))" />
+            <param name="LARGE_RADIUS_THRESHOLD" value="50" if="$(eval robot_namespace.startswith('turflynx'))" />
+            <!-- <param name="MIN_VOXEL_SIZE" value="1" if="$(eval robot_namespace.startswith('spot'))" />
+            <param name="MAX_VOXEL_SIZE" value="5" if="$(eval robot_namespace.startswith('spot'))" /> -->
             <param name="MAP_FRAME" value="$(arg map_frame)" />
         </node>
 
         <node pkg="hero_localization" name="sensor_monitor" type="sensor_monitor.py" output="screen"> 
             <param name="SENSOR_CONFIG_FILE" value="$(arg sensor_config_file)" />
+            <param name="USE_HEATMAP" value="true" />
+            <param name="USE_SPATIAL_INTERPOLATION" value="true" />
+            <param name="MAP_FRAME" value="$(arg map_frame)" />
+            <param name="BASE_FRAME" value="$(arg robot_namespace)/base_link" />
             <param name="PASSTHROUGH" value="false" />
+            <param name="GLOBAL_ESTIMATE" value="odometry/filtered" />
             <!-- <param name="ICP_RESET_TRIGGER" value="trigger_global_search" /> -->
+        </node>
+
+        <!-- Convert latitude and longitude to ENU -->
+        <node pkg="robot_localization" type="navsat_transform_node" name="navsat_transform" if="$(eval robot_namespace.startswith('turflynx'))">
+            <param name="publish_filtered_gps" value="false"/>
+            <param name="use_odometry_yaw" value="true"/>
+            <param name="zero_altitude" value="true"/>
+            <param name="wait_for_datum" value="false"/>
+
+            <remap from="gps/fix" to="gps/monitored"/>
+            <remap from="odometry/filtered" to="odometry/filtered"/>
         </node>
 
         <node pkg="robot_localization" type="ekf_localization_node" name="ekf_localization" output="screen">
             <param name="frequency" value="10"/>
             <param name="sensor_timeout" value="10.0"/>
-            <param name="two_d_mode" value="false"/>
+            <param name="two_d_mode" value="true"/>
             <param name="map_frame" value="$(arg map_frame)"/>
             <param name="odom_frame" value="$(arg robot_namespace)/odom"/>
             <param name="base_link_frame" value="$(arg robot_namespace)/base_link"/>
@@ -122,6 +162,7 @@
             <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_spot.yaml" if="$(eval robot_namespace.startswith('spot'))" />
             <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_husky.yaml" if="$(eval robot_namespace.startswith('husky'))" />
             <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_jackal.yaml" if="$(eval robot_namespace.startswith('jackal'))" />
+            <rosparam command="load" file="$(find hero_localization)/config/ekf_nebula_turflynx.yaml" if="$(eval robot_namespace.startswith('turflynx'))" />
         </node>
 
         <node pkg="nodelet"
@@ -217,6 +258,7 @@
            <param name="num_threads"                value="4" if="$(eval robot_namespace.startswith('husky'))" />
            <param name="num_threads"                value="4" if="$(eval robot_namespace.startswith('jackal'))" />
            <param name="num_threads"                value="1" if="$(eval robot_namespace.startswith('spot'))" />
+           <param name="num_threads"                value="4" if="$(eval robot_namespace.startswith('turflynx'))" />
 
         </node>
 

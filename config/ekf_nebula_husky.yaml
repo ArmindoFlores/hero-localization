@@ -8,13 +8,13 @@ pose0_config: [
     false, false, false
 ]
 
-# odom0: wheel_odom/monitored
-# odom0_differential: false
-# odom0_config: [false, false, false,
-#                false, false, false,
-#                true,  true,  false,
-#                false, false, true,
-#                false, false, false]
+odom0: wheel_odom/monitored
+odom0_differential: false
+odom0_config: [false, false, false,
+               false, false, false,
+               true,  true,  false,
+               false, false, true,
+               false, false, false]
 
 imu0: vn100/imu_wori_wcov/monitored
 imu0_differential: false
@@ -35,23 +35,23 @@ imu0_remove_gravitational_acceleration: true
 #     0, 0, 0,
 #     0, 0, 0
 # ]
-# For dataset B:
-# initial_state: [
-#     -2.53, -0.05, 0.014,
-#     0.0026, -0.006, 0.077,
-#     0, 0, 0,
-#     0, 0, 0,
-#     0, 0, 0
-# ]
-
-# For dataset D:
+# For dataset C:
 initial_state: [
-    -7.88, 214.7, 1.99,
+    -2.53, -0.05, 0.014,
     0.0026, -0.006, 0.077,
     0, 0, 0,
     0, 0, 0,
     0, 0, 0
 ]
+
+# # For dataset D:
+# initial_state: [
+#     -7.88, 214.7, 1.99,
+#     0.0026, -0.006, 0.077,
+#     0, 0, 0,
+#     0, 0, 0,
+#     0, 0, 0
+# ]
 
 # process_noise_covariance: [0.05, 0,    0,    0,    0,    0,
 #                             0,   0.05,  0,    0,    0,    0,
